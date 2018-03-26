@@ -1,11 +1,18 @@
+import org.opencv.core.*;
+import org.opencv.imgproc.Imgproc;
+
 import javax.imageio.ImageIO;
-import java.awt.*;
+import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferByte;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
 
 public class Main {
+    // Compulsory
+    static{ System.loadLibrary(Core.NATIVE_LIBRARY_NAME); }
+
     public static final String OUTPUT_SUFFIX = ".out";
 
     public static void main(String[] args) throws IOException {
@@ -26,7 +33,7 @@ public class Main {
                 System.err.println("image is null");
                 continue;
             }
-            img = detectIgnoreBackground(img);
+            img = detectCircles(img);
             File outputfile = new File(filePath.substring(0, file.getPath().indexOf(".")) + OUTPUT_SUFFIX);
             ImageIO.write(img, "jpg", outputfile);
         }
@@ -219,32 +226,106 @@ public class Main {
         return image;
     }
 
-    private static BufferedImage naiveDetectGrayscale(BufferedImage bm) {
-        Mat mat = new Mat(bm.getWidth(), bm.getHeight(), CvType.CV_8UC1);
-        Utils.bitmapToMat(bm, mat);
-        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2GRAY);
-        Utils.matToBitmap(mat, bm);
+//    private static BufferedImage naiveDetectGrayscale(BufferedImage image) {
+//        Mat mat = new Mat(image.getWidth(), image.getHeight(), CvType.CV_8UC1);
+//
+//        bitmapToMat(image, mat);
+//        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2GRAY);
+//        matToBufferedImage(mat, image);
+//
+//        float[] hsv = new float[3];
+//        Color currColor = null;
+//        for (int x = 0; x < image.getWidth(); x++) {
+//            for (int y = 0; y < image.getHeight(); y++) {
+//                currColor = new Color(image.getRGB(x, y));
+//                Color.RGBtoHSB(currColor.getRed(), currColor.getBlue(), currColor.getGreen(), hsv);
+//                // satuation
+////                    Log.d("value",""+hsv[2]);
+//                if (hsv[2] < 0.58)
+//                    image.setRGB(x, y, Color.BLACK.getRGB());
+//            }
+//        }
+//    }
 
-        int percentage = 0;
+    private static BufferedImage detectCircles(BufferedImage image) {
+            /* convert bitmap to mat */
+        Mat mat = bufferedImageToMat(image);
+        Mat grayMat = new Mat(image.getHeight(), image.getWidth(), CvType.CV_8UC1);
 
-        float[] hsv = new float[3];
-        for (int x = 0; x < bm.getWidth(); x++) {
-            for (int y = 0; y < bm.getHeight(); y++) {
-                Color.colorToHSV(bm.getPixel(x, y), hsv);
-                // satuation
-//                    Log.d("value",""+hsv[2]);
-                if (hsv[2] < 0.58)
-                    bm.setPixel(x, y, Color.BLACK);
+        /* convert to grayscale */
+        int colorChannels = (mat.channels() == 3 || mat.channels() == 4) ? Imgproc.COLOR_BGR2GRAY : 1;
 
-                // update progress
-                int newPercent = (x + 1) * (y + 1) * 100 / (bm.getWidth() * bm.getHeight());
-                while (percentage < newPercent) {
-                    percentage++;
-                    publishProgress(percentage);
-                }
-            }
+        Imgproc.cvtColor(mat, grayMat, colorChannels);
+        Imgproc.equalizeHist(grayMat, grayMat);
+            /* reduce the noise so we avoid false circle detection */
+        Imgproc.dilate(grayMat, grayMat, new Mat());
+        Imgproc.GaussianBlur(grayMat, grayMat, new Size(5, 5), 2, 2);
+
+        // accumulator value
+        double dp = 1;
+        // minimum distance between the center coordinates of detected circles in pixels
+        double minDist = 5;
+
+        // min and max radii (set these values as you desire)
+        int minRadius = 10, maxRadius = 40;
+
+        // param1 = gradient value used to handle edge detection
+        // param2 = Accumulator threshold value for the
+        // cv2.CV_HOUGH_GRADIENT method.
+        // The smaller the threshold is, the more circles will be
+        // detected (including false circles).
+        // The larger the threshold is, the more circles will
+        // potentially be returned.
+        double param1 = 80, param2 = 10;
+
+            /* create a Mat object to store the circles detected */
+        Mat circles = new Mat(image.getHeight(),
+                image.getWidth(), CvType.CV_8UC1);
+
+            /* find the circle in the image */
+        Imgproc.HoughCircles(grayMat, circles,
+                Imgproc.CV_HOUGH_GRADIENT, dp, minDist, param1,
+                param2, minRadius, maxRadius);
+
+            /* get the number of circles detected */
+        int numberOfCircles = circles.cols();
+
+            /* draw the circles found on the image */
+        for (int i=0; i<numberOfCircles; i++) {
+                /* get the circle details, circleCoordinates[0, 1, 2] = (x,y,r)
+                 * (x,y) are the coordinates of the circle's center
+                 */
+            double[] circleCoordinates = circles.get(0, i);
+
+            int x = (int) circleCoordinates[0], y = (int) circleCoordinates[1];
+            Point center = new Point(x, y);
+
+            int radius = (int) circleCoordinates[2];
+
+                /* circle's outline */
+            Imgproc.circle(grayMat, center, radius, new Scalar(0, 255, 0), 1);
         }
+
+        /* convert back to buffered image */
+        BufferedImage result = matToBufferedImage(grayMat);
+        return result;
     }
+
+    // Put image data into a matrix
+    private static Mat bufferedImageToMat(BufferedImage image) {
+        Mat mat = new Mat(image.getHeight(), image.getWidth(), CvType.CV_8UC3);
+        mat.put(0, 0, ((DataBufferByte) image.getRaster().getDataBuffer()).getData());
+        return mat;
+    }
+
+    private static BufferedImage matToBufferedImage(Mat mat) {
+        byte[] data = new byte[mat.rows() * mat.cols() * (int)(mat.elemSize())];
+        mat.get(0, 0, data);
+        BufferedImage image = new BufferedImage(mat.cols(), mat.rows(), BufferedImage.TYPE_BYTE_GRAY);
+        image.getRaster().setDataElements(0, 0, mat.cols(), mat.rows(), data);
+        return image;
+    }
+
     // use CIE76 ΔE*ab to compute color similarity
     // a and b are RGB values
     public static boolean colorsAreSimilar(Color a, Color b, int maxDelta) {
