@@ -219,6 +219,32 @@ public class Main {
         return image;
     }
 
+    private static BufferedImage naiveDetectGrayscale(BufferedImage bm) {
+        Mat mat = new Mat(bm.getWidth(), bm.getHeight(), CvType.CV_8UC1);
+        Utils.bitmapToMat(bm, mat);
+        Imgproc.cvtColor(mat, mat, Imgproc.COLOR_BGR2GRAY);
+        Utils.matToBitmap(mat, bm);
+
+        int percentage = 0;
+
+        float[] hsv = new float[3];
+        for (int x = 0; x < bm.getWidth(); x++) {
+            for (int y = 0; y < bm.getHeight(); y++) {
+                Color.colorToHSV(bm.getPixel(x, y), hsv);
+                // satuation
+//                    Log.d("value",""+hsv[2]);
+                if (hsv[2] < 0.58)
+                    bm.setPixel(x, y, Color.BLACK);
+
+                // update progress
+                int newPercent = (x + 1) * (y + 1) * 100 / (bm.getWidth() * bm.getHeight());
+                while (percentage < newPercent) {
+                    percentage++;
+                    publishProgress(percentage);
+                }
+            }
+        }
+    }
     // use CIE76 ΔE*ab to compute color similarity
     // a and b are RGB values
     public static boolean colorsAreSimilar(Color a, Color b, int maxDelta) {
