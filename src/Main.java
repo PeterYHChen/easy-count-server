@@ -256,7 +256,7 @@ public class Main {
         int colorChannels = (mat.channels() == 3 || mat.channels() == 4) ? Imgproc.COLOR_BGR2GRAY : 1;
 
         Imgproc.cvtColor(mat, grayMat, colorChannels);
-        Imgproc.equalizeHist(grayMat, grayMat);
+//        Imgproc.equalizeHist(grayMat, grayMat);
             /* reduce the noise so we avoid false circle detection */
         Imgproc.dilate(grayMat, grayMat, new Mat());
         Imgproc.GaussianBlur(grayMat, grayMat, new Size(5, 5), 2, 2);
