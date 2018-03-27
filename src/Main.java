@@ -1,19 +1,23 @@
 import org.opencv.core.*;
+import org.opencv.core.Point;
 import org.opencv.imgproc.Imgproc;
 
 import javax.imageio.ImageIO;
-import java.awt.Color;
+import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.List;
 
 public class Main {
     // Compulsory
     static{ System.loadLibrary(Core.NATIVE_LIBRARY_NAME); }
 
     public static final String OUTPUT_SUFFIX = ".out";
+    public static final int MAX_DELTA = 15;
+    public static final double CANNY_LOW_THREASHOLD = 7;
 
     public static void main(String[] args) throws IOException {
         File[] files = new File("data").listFiles();
@@ -37,6 +41,103 @@ public class Main {
             File outputfile = new File(filePath.substring(0, file.getPath().indexOf(".")) + OUTPUT_SUFFIX);
             ImageIO.write(img, "jpg", outputfile);
         }
+    }
+
+    private static BufferedImage detectSimilarColorRegion(BufferedImage image) {
+        List<PointRegion> pointRegions = new ArrayList<>();
+
+        int[] offset = {-1, 0, 1, 0, 0, -1, 0, 1, 1, 1, -1, -1, 1, -1, -1, 1};
+
+        // Initialization
+        boolean[][] markCnt = new boolean[image.getWidth()][image.getHeight()];
+        PointRegion.PointAttribute[][] pointAttributes = new PointRegion.PointAttribute[image.getWidth()][image.getHeight()];
+        for (int x = 0; x < image.getWidth(); x++) {
+            for (int y = 0; y < image.getHeight(); y++) {
+                pointAttributes[x][y] = new PointRegion.PointAttribute(image.getRGB(x, y), false);
+                markCnt[x][y] = false;
+            }
+        }
+
+        int[] objectPixelCntSum = new int[100];
+        Arrays.fill(objectPixelCntSum, 0);
+
+        for (int x = 0; x < image.getWidth(); x++) {
+            for (int y = 0; y < image.getHeight(); y++) {
+                // transparent pixel, this pixel doesn't display, skip
+                if (image.getRGB(x, y) == 0)
+                    continue;
+
+                // use bfs to mark all adjacent object pixels to recognize as one object
+                if (!markCnt[x][y]) {
+                    java.awt.Point pos = new java.awt.Point(x, y);
+                    Queue<java.awt.Point> queue = new LinkedList<>();
+                    queue.add(pos);
+
+                    java.awt.Point currPos, nextPos;
+                    while (!queue.isEmpty()) {
+                        currPos = queue.poll();
+                        int xPos = (int) currPos.getX();
+                        int yPos = (int) currPos.getY();
+
+                        // Mark current point as visited
+                        markCnt[xPos][yPos] = true;
+
+                        int nextXPos, nextYPos;
+                        for (int i = 0; i < 16; i += 2) {
+                            nextXPos = xPos + offset[i];
+                            nextYPos = yPos + offset[i+1];
+
+                            // skip invalid pixel position (out of bound or transparent)
+                            if (nextXPos < 0 || nextXPos >= image.getWidth()
+                                    || nextYPos < 0 || nextYPos >= image.getHeight()
+                                    || image.getRGB(nextXPos, nextYPos) == 0) {
+                                continue;
+                            }
+
+                            // skip pixels that have been marked already
+                            if (markCnt[nextXPos][nextYPos]) {
+                                continue;
+                            }
+
+                            // If the current point is has different color from the adjacent point,
+                            // set both points as edges and skip
+                            if (!colorsAreSimilar(image.getRGB(xPos, yPos), image.getRGB(nextXPos, nextYPos), MAX_DELTA)) {
+                                pointAttributes[xPos][yPos].isEdge = true;
+                                pointAttributes[nextXPos][nextYPos].isEdge = true;
+                                image.setRGB(xPos, yPos, Color.BLACK.getRGB());
+//                                image.setRGB(nextXPos, nextYPos, Color.BLACK.getRGB());
+                                continue;
+                            }
+
+                            // The adjacent point is a valid, not visited before, and has similar color
+                            nextPos = new java.awt.Point(nextXPos, nextYPos);
+                            markCnt[nextXPos][nextYPos] = true;
+
+                            queue.add(nextPos);
+                        }
+                    }
+
+//                    if (objectSize >= 800 || objectSize <= 3) {
+//                        objectCnt--;
+//                        while (!resumeQ.isEmpty()) {
+//                            image.setRGB((int)resumeQ.peek().getX(), (int)resumeQ.peek().getY(), Color.BLACK.getRGB());
+//                            resumeQ.poll();
+//                        }
+//                    } else {
+//                        while (!resumeQ.isEmpty()) {
+//                            image.setRGB((int)resumeQ.peek().getX(), (int)resumeQ.peek().getY(), Color.RED.getRGB());
+//                            resumeQ.poll();
+//                        }
+//                    }
+//                    if (objectSize >= 100)
+//                        objectPixelCntSum[objectPixelCntSum.length-1]++;
+//                    else
+//                        objectPixelCntSum[objectSize]++;
+                }
+            }
+        }
+
+        return image;
     }
 
     private static BufferedImage naiveDetect(BufferedImage image) {
@@ -246,6 +347,28 @@ public class Main {
 //            }
 //        }
 //    }
+    private static BufferedImage detectEdges(BufferedImage image) {
+                /* convert bitmap to mat */
+        Mat mat = bufferedImageToMat(image);
+        Mat grayMat = new Mat(image.getHeight(), image.getWidth(), CvType.CV_8UC1);
+
+            /* convert to grayscale */
+        int colorChannels = (mat.channels() == 3 || mat.channels() == 4) ? Imgproc.COLOR_BGR2GRAY : 1;
+
+        Imgproc.cvtColor(mat, grayMat, colorChannels);
+    //        Imgproc.equalizeHist(grayMat, grayMat);
+                /* reduce the noise so we avoid false circle detection */
+//        Imgproc.dilate(grayMat, grayMat, new Mat());
+        Imgproc.blur(grayMat, grayMat, new Size(7, 7));
+        Imgproc.Canny(grayMat, grayMat, CANNY_LOW_THREASHOLD, CANNY_LOW_THREASHOLD*3, 3, false);
+
+//        Mat dest = new Mat();
+//        Core.add(dest, Scalar.all(0), dest);
+//        frame.copyTo(dest, detectedEdges);
+        /* convert back to buffered image */
+        BufferedImage result = matToBufferedImage(grayMat);
+        return result;
+    }
 
     private static BufferedImage detectCircles(BufferedImage image) {
             /* convert bitmap to mat */
@@ -258,16 +381,17 @@ public class Main {
         Imgproc.cvtColor(mat, grayMat, colorChannels);
 //        Imgproc.equalizeHist(grayMat, grayMat);
             /* reduce the noise so we avoid false circle detection */
-        Imgproc.dilate(grayMat, grayMat, new Mat());
-        Imgproc.GaussianBlur(grayMat, grayMat, new Size(5, 5), 2, 2);
+//        Imgproc.dilate(grayMat, grayMat, new Mat());
+//        Imgproc.GaussianBlur(grayMat, grayMat, new Size(5, 5), 2, 2);
+        Imgproc.blur(grayMat, grayMat, new Size(5, 5));
 
         // accumulator value
         double dp = 1;
         // minimum distance between the center coordinates of detected circles in pixels
-        double minDist = 5;
+        double minDist = 20;
 
         // min and max radii (set these values as you desire)
-        int minRadius = 10, maxRadius = 40;
+        int minRadius = 20, maxRadius = 40;
 
         // param1 = gradient value used to handle edge detection
         // param2 = Accumulator threshold value for the
@@ -276,7 +400,7 @@ public class Main {
         // detected (including false circles).
         // The larger the threshold is, the more circles will
         // potentially be returned.
-        double param1 = 80, param2 = 10;
+        double param1 = 50, param2 = 10;
 
             /* create a Mat object to store the circles detected */
         Mat circles = new Mat(image.getHeight(),
@@ -324,6 +448,12 @@ public class Main {
         BufferedImage image = new BufferedImage(mat.cols(), mat.rows(), BufferedImage.TYPE_BYTE_GRAY);
         image.getRaster().setDataElements(0, 0, mat.cols(), mat.rows(), data);
         return image;
+    }
+
+
+    // use CIE76 ΔE*ab to compute color similarity
+    public static boolean colorsAreSimilar(int rgb1, int rgb2, int maxDelta) {
+        return colorsAreSimilar(new Color(rgb1), new Color(rgb2), maxDelta);
     }
 
     // use CIE76 ΔE*ab to compute color similarity
