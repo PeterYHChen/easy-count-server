@@ -16,7 +16,6 @@ public class Main {
     static{ System.loadLibrary(Core.NATIVE_LIBRARY_NAME); }
 
     public static final String OUTPUT_SUFFIX = ".out";
-    public static final int MAX_DELTA = 15;
     public static final double CANNY_LOW_THREASHOLD = 7;
 
     public static void main(String[] args) throws IOException {
@@ -101,7 +100,7 @@ public class Main {
 
                             // If the current point is has different color from the adjacent point,
                             // set both points as edges and skip
-                            if (!colorsAreSimilar(image.getRGB(xPos, yPos), image.getRGB(nextXPos, nextYPos), MAX_DELTA)) {
+                            if (!colorsAreSimilar(image.getRGB(xPos, yPos), image.getRGB(nextXPos, nextYPos), 15)) {
                                 pointAttributes[xPos][yPos].isEdge = true;
                                 pointAttributes[nextXPos][nextYPos].isEdge = true;
                                 image.setRGB(xPos, yPos, Color.BLACK.getRGB());
@@ -371,7 +370,22 @@ public class Main {
     }
 
     private static BufferedImage detectCircles(BufferedImage image) {
-            /* convert bitmap to mat */
+        // Used to draw on the image
+        Graphics2D imageGraphics = (Graphics2D) image.getGraphics();
+
+        // Compute color similarity first
+        boolean[][] isObject = new boolean[image.getWidth()][image.getHeight()];
+        for (int x = 0; x < image.getWidth(); x++) {
+            for (int y = 0; y < image.getHeight(); y++) {
+                if (image.getRGB(x, y) == 0) {
+                    isObject[x][y] = false;
+                    continue;
+                }
+                isObject[x][y] = colorsAreSimilar(image.getRGB(x, y), Color.decode("#CDCAB9").getRGB(), 100);
+            }
+        }
+
+        /* convert bitmap to mat */
         Mat mat = bufferedImageToMat(image);
         Mat grayMat = new Mat(image.getHeight(), image.getWidth(), CvType.CV_8UC1);
 
@@ -400,25 +414,22 @@ public class Main {
         // detected (including false circles).
         // The larger the threshold is, the more circles will
         // potentially be returned.
-        double param1 = 50, param2 = 10;
+        double param1 = 40, param2 = 10;
 
-            /* create a Mat object to store the circles detected */
-        Mat circles = new Mat(image.getHeight(),
-                image.getWidth(), CvType.CV_8UC1);
+        /* create a Mat object to store the circles detected */
+        Mat circles = new Mat(image.getHeight(), image.getWidth(), CvType.CV_8UC1);
 
-            /* find the circle in the image */
-        Imgproc.HoughCircles(grayMat, circles,
-                Imgproc.CV_HOUGH_GRADIENT, dp, minDist, param1,
+        /* find the circle in the image */
+        Imgproc.HoughCircles(grayMat, circles, Imgproc.CV_HOUGH_GRADIENT, dp, minDist, param1,
                 param2, minRadius, maxRadius);
 
-            /* get the number of circles detected */
+        /* get the number of circles detected */
         int numberOfCircles = circles.cols();
-
-            /* draw the circles found on the image */
+        /* draw the circles found on the image */
         for (int i=0; i<numberOfCircles; i++) {
-                /* get the circle details, circleCoordinates[0, 1, 2] = (x,y,r)
-                 * (x,y) are the coordinates of the circle's center
-                 */
+            /* get the circle details, circleCoordinates[0, 1, 2] = (x,y,r)
+             * (x,y) are the coordinates of the circle's center
+             */
             double[] circleCoordinates = circles.get(0, i);
 
             int x = (int) circleCoordinates[0], y = (int) circleCoordinates[1];
@@ -426,13 +437,38 @@ public class Main {
 
             int radius = (int) circleCoordinates[2];
 
-                /* circle's outline */
-            Imgproc.circle(grayMat, center, radius, new Scalar(0, 255, 0), 1);
+            // Take random points in the circle and evaluate how many points have a similar color to the object
+            int area = (int) (Math.PI * radius * radius);
+            int numOfRandomPoints = area / 10;
+            double randomAngle, randomR;
+            int randomX, randomY;
+            int numOfObjectPoints = 0;
+            for (int n = 0; n < numOfRandomPoints; n++) {
+                randomAngle = 2 * Math.PI * Math.random();
+                randomR = radius * Math.sqrt(Math.random());
+                randomX = (int) (x + randomR * Math.cos(randomAngle));
+                randomY = (int) (y + randomR * Math.sin(randomAngle));
+                // Ignore out of bound points
+                if (randomX < 0 || randomX >= image.getWidth() || randomY < 0 || randomY >= image.getHeight()) {
+                    n--;
+                    continue;
+                }
+                if (isObject[randomX][randomY]) {
+                    numOfObjectPoints++;
+                    image.setRGB(randomX, randomY, Color.GREEN.getRGB());
+                } else {
+                    image.setRGB(randomX, randomY, Color.RED.getRGB());
+                }
+            }
+
+            /* Draw circle's outline when it is more likely to be an object */
+            if ((double) numOfObjectPoints / numOfRandomPoints > 0.6) {
+                imageGraphics.setColor(Color.BLACK);
+                imageGraphics.drawOval(x-radius, y-radius, radius * 2, radius * 2);
+            }
         }
 
-        /* convert back to buffered image */
-        BufferedImage result = matToBufferedImage(grayMat);
-        return result;
+        return image;
     }
 
     // Put image data into a matrix
