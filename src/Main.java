@@ -16,7 +16,7 @@ public class Main {
     static{ System.loadLibrary(Core.NATIVE_LIBRARY_NAME); }
 
     public static final String OUTPUT_SUFFIX = ".out";
-    public static final double CANNY_LOW_THREASHOLD = 7;
+    public static final double CANNY_LOW_THREASHOLD = 20;
 
     public static void main(String[] args) throws IOException {
         File[] files = new File("data").listFiles();
@@ -37,7 +37,7 @@ public class Main {
                 continue;
             }
             img = detectCircles(img);
-            File outputfile = new File(filePath.substring(0, file.getPath().indexOf(".")) + OUTPUT_SUFFIX);
+            File outputfile = new File(filePath.substring(0, file.getPath().indexOf(".")) + "_circle" + OUTPUT_SUFFIX);
             ImageIO.write(img, "jpg", outputfile);
         }
     }
@@ -347,8 +347,29 @@ public class Main {
 //        }
 //    }
     private static BufferedImage detectEdges(BufferedImage image) {
-                /* convert bitmap to mat */
-        Mat mat = bufferedImageToMat(image);
+            /* convert bitmap to mat */
+        Mat mat = colorImageToMat(image);
+        Mat grayMat = new Mat(image.getHeight(), image.getWidth(), CvType.CV_8UC1);
+
+                /* convert to grayscale */
+        int colorChannels = (mat.channels() == 3 || mat.channels() == 4) ? Imgproc.COLOR_BGR2GRAY : 1;
+
+        Imgproc.cvtColor(mat, grayMat, colorChannels);
+        //        Imgproc.equalizeHist(grayMat, grayMat);
+        Imgproc.blur(grayMat, grayMat, new Size(7, 7));
+        Imgproc.Canny(grayMat, grayMat, CANNY_LOW_THREASHOLD, CANNY_LOW_THREASHOLD*3, 3, false);
+            /* reduce the noise so we avoid false circle detection */
+//        Imgproc.dilate(grayMat, grayMat, new Mat());
+//        Imgproc.erode(grayMat, grayMat, new Mat());
+
+            /* convert back to buffered image */
+        BufferedImage result = matToBufferedImage(grayMat);
+        return result;
+    }
+
+    private static BufferedImage detectContours(BufferedImage image) {
+        /* convert bitmap to mat */
+        Mat mat = colorImageToMat(image);
         Mat grayMat = new Mat(image.getHeight(), image.getWidth(), CvType.CV_8UC1);
 
             /* convert to grayscale */
@@ -356,16 +377,23 @@ public class Main {
 
         Imgproc.cvtColor(mat, grayMat, colorChannels);
     //        Imgproc.equalizeHist(grayMat, grayMat);
-                /* reduce the noise so we avoid false circle detection */
-//        Imgproc.dilate(grayMat, grayMat, new Mat());
         Imgproc.blur(grayMat, grayMat, new Size(7, 7));
         Imgproc.Canny(grayMat, grayMat, CANNY_LOW_THREASHOLD, CANNY_LOW_THREASHOLD*3, 3, false);
+        /* reduce the noise so we avoid false circle detection */
+        Imgproc.dilate(grayMat, grayMat, new Mat());
+        Imgproc.erode(grayMat, grayMat, new Mat());
 
-//        Mat dest = new Mat();
-//        Core.add(dest, Scalar.all(0), dest);
-//        frame.copyTo(dest, detectedEdges);
+        /* create a Mat object to store the circles detected */
+        List<MatOfPoint> contours = new ArrayList<MatOfPoint>();
+        Imgproc.findContours(grayMat, contours, new Mat(), Imgproc.RETR_LIST,Imgproc.CHAIN_APPROX_SIMPLE);
+        Imgproc.drawContours(mat, contours, -1, new Scalar(0,0,255));
+//        for(int i=0; i< contours.size();i++){
+////            System.out.println(Imgproc.contourArea(contours.get(i)));
+//            Rect rect = Imgproc.boundingRect(contours.get(i));
+//            Imgproc.rectangle(mat, new Point(rect.x,rect.y), new Point(rect.x+rect.width,rect.y+rect.height),new Scalar(0,0,255));
+//        }
         /* convert back to buffered image */
-        BufferedImage result = matToBufferedImage(grayMat);
+        BufferedImage result = matToBufferedImage(mat);
         return result;
     }
 
@@ -386,7 +414,7 @@ public class Main {
         }
 
         /* convert bitmap to mat */
-        Mat mat = bufferedImageToMat(image);
+        Mat mat = colorImageToMat(image);
         Mat grayMat = new Mat(image.getHeight(), image.getWidth(), CvType.CV_8UC1);
 
         /* convert to grayscale */
@@ -462,17 +490,17 @@ public class Main {
             }
 
             /* Draw circle's outline when it is more likely to be an object */
-            if ((double) numOfObjectPoints / numOfRandomPoints > 0.6) {
+//            if ((double) numOfObjectPoints / numOfRandomPoints > 0.6) {
                 imageGraphics.setColor(Color.BLACK);
                 imageGraphics.drawOval(x-radius, y-radius, radius * 2, radius * 2);
-            }
+//            }
         }
 
         return image;
     }
 
     // Put image data into a matrix
-    private static Mat bufferedImageToMat(BufferedImage image) {
+    private static Mat colorImageToMat(BufferedImage image) {
         Mat mat = new Mat(image.getHeight(), image.getWidth(), CvType.CV_8UC3);
         mat.put(0, 0, ((DataBufferByte) image.getRaster().getDataBuffer()).getData());
         return mat;
@@ -481,7 +509,14 @@ public class Main {
     private static BufferedImage matToBufferedImage(Mat mat) {
         byte[] data = new byte[mat.rows() * mat.cols() * (int)(mat.elemSize())];
         mat.get(0, 0, data);
-        BufferedImage image = new BufferedImage(mat.cols(), mat.rows(), BufferedImage.TYPE_BYTE_GRAY);
+        int imageType;
+        if(mat.channels() == 1) {
+            imageType = BufferedImage.TYPE_BYTE_GRAY;
+        } else {
+            imageType = BufferedImage.TYPE_3BYTE_BGR;
+        }
+
+        BufferedImage image = new BufferedImage(mat.cols(), mat.rows(), imageType);
         image.getRaster().setDataElements(0, 0, mat.cols(), mat.rows(), data);
         return image;
     }
